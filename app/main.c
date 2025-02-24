@@ -34,6 +34,11 @@ static void explain_waitpid(int status)
     }
 }
 
+// Function to print version
+void print_version() {
+    printf("Shell version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
+}
+
 int main(int argc, char *argv[])
 {
     parse_args(argc, argv);
@@ -49,6 +54,15 @@ int main(int argc, char *argv[])
             free(line);
             continue;
         }
+
+         // Check if the user entered -v for version
+         if (strcmp(line, "-v") == 0)
+         {
+             print_version();  // Print the version
+             free(line);
+             continue;  // Return to the prompt
+         }
+
         add_history(line);
         // check to see if we are launching a built in command
         char **cmd = cmd_parse(line);

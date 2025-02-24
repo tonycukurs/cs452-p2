@@ -3,191 +3,186 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <pwd.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <ctype.h>
-#include <limits.h>
-#include <termios.h>
 #include <signal.h>
+#include <errno.h>
+#include <ctype.h>
 
-// Signal handler for SIGCHLD
-void handle_sigchld(int sig) {
-    (void)sig; // Suppress unused parameter warning
-    while (waitpid(-1, NULL, WNOHANG) > 0);
-}
-
-// Get the shell prompt from an environment variable or use a default
+//-----------------------------------------------------------------------------
+// get_prompt
+//-----------------------------------------------------------------------------
 char *get_prompt(const char *env) {
-    const char *prompt = getenv(env);
-    if (!prompt) {
-        prompt = "shell> ";
+    const char *prompt_env = getenv(env);
+    if (prompt_env && *prompt_env) {
+        return strdup(prompt_env);  // Caller must free the returned string.
     }
-    return strdup(prompt);  // Caller must free()
+    return strdup("shell>");  // Default prompt.
 }
 
-// Change directory implementation
+//-----------------------------------------------------------------------------
+// change_dir
+//-----------------------------------------------------------------------------
 int change_dir(char **dir) {
-    if (!dir[1]) {
-        struct passwd *pw = getpwuid(getuid());
-        if (!pw) {
-            perror("getpwuid failed");
+    if (dir == NULL || *dir == NULL) {
+        // No directory argument provided; use HOME.
+        const char *home = getenv("HOME");
+        if (home == NULL) {
+            fprintf(stderr, "change_dir: HOME environment variable not set\n");
             return -1;
         }
-        return chdir(pw->pw_dir); // Change to home directory
-    } 
-    return chdir(dir[1]); // Change to specified directory
+        if (chdir(home) != 0) {
+            perror("change_dir");
+            return -1;
+        }
+    } else {
+        // Attempt to change to the provided directory.
+        if (chdir(*dir) != 0) {
+            fprintf(stderr, "change_dir: cannot change to directory '%s': %s\n", *dir, strerror(errno));
+            return -1;
+        }
+    }
+    return 0;
 }
 
-// Parse command line into arguments
+//-----------------------------------------------------------------------------
+// cmd_parse
+//-----------------------------------------------------------------------------
+// This function tokenizes the input line into an array of strings suitable for execvp.
+// It allocates memory for the array and each token, so cmd_free must later be called.
 char **cmd_parse(const char *line) {
-    if (!line) return NULL;
-
-    int arg_count = 0;
-    char **args = malloc((sysconf(_SC_ARG_MAX) / 2) * sizeof(char *));
-    if (!args) {
-        perror("malloc failed");
-        exit(EXIT_FAILURE);
+    if (line == NULL)
+        return NULL;
+    
+    // First, count the number of tokens.
+    int count = 0;
+    char *copy = strdup(line);
+    char *token = strtok(copy, " \t");
+    while (token != NULL) {
+        count++;
+        token = strtok(NULL, " \t");
     }
+    free(copy);
 
-    char *token = strtok(strdup(line), " ");
-    while (token) {
-        args[arg_count++] = token;
-        token = strtok(NULL, " ");
+    // Allocate array of pointers (+1 for NULL termination).
+    char **args = malloc((count + 1) * sizeof(char *));
+    if (!args)
+        return NULL;
+
+    // Tokenize again and store each token.
+    copy = strdup(line);
+    token = strtok(copy, " \t");
+    int i = 0;
+    while (token != NULL) {
+        args[i++] = strdup(token);
+        token = strtok(NULL, " \t");
     }
-    args[arg_count] = NULL; // NULL-terminated array
-
+    args[i] = NULL; // Null-terminate the array.
+    free(copy);
     return args;
 }
 
-// Free allocated command memory
+//-----------------------------------------------------------------------------
+// cmd_free
+//-----------------------------------------------------------------------------
 void cmd_free(char **line) {
-    if (!line) return;
+    if (!line)
+        return;
     for (int i = 0; line[i] != NULL; i++) {
-        free(line[i]);  // Free each token allocated by strdup
+        free(line[i]);
     }
-    free(line);  // Free the array itself
+    free(line);
 }
 
-
-// Trim leading and trailing whitespace
+//-----------------------------------------------------------------------------
+// trim_white
+//-----------------------------------------------------------------------------
+// Trims leading and trailing whitespace in place.
 char *trim_white(char *line) {
-    if (!line) return NULL;
+    if (!line)
+        return line;
 
-    // Trim leading whitespace
-    while (isspace((unsigned char)*line)) line++;
+    // Trim leading whitespace.
+    while (isspace((unsigned char)*line))
+        line++;
 
-    // Trim trailing whitespace
+    if (*line == 0)  // All spaces.
+        return line;
+
+    // Trim trailing whitespace.
     char *end = line + strlen(line) - 1;
-    while (end > line && isspace((unsigned char)*end)) *end-- = '\0';
-
+    while (end > line && isspace((unsigned char)*end))
+        end--;
+    *(end + 1) = '\0';
     return line;
 }
 
-bool do_builtin(struct shell *sh, char **argv)
-{
-    UNUSED(sh);
-
-    if (argv[0] == NULL)
-    {
+//-----------------------------------------------------------------------------
+// do_builtin
+//-----------------------------------------------------------------------------
+// Checks if the command is a built-in and executes it if so.
+bool do_builtin(struct shell *sh, char **argv) {
+    if (!argv || !argv[0])
         return false;
+
+    // Exit built-in: terminates the shell.
+    if (strcmp(argv[0], "exit") == 0) {
+        sh_destroy(sh);
+        exit(EXIT_SUCCESS);
     }
 
-    // Handle "exit" command
-    if (strcmp(argv[0], "exit") == 0)
-    {
-        exit(0);
-    }
-
-    // Check if last argument is "&" (background process)
-    int i = 0;
-    bool background = false;
-
-    while (argv[i] != NULL)
-    {
-        i++;
-    }
-
-    if (i > 0 && strcmp(argv[i - 1], "&") == 0)
-    {
-        background = true;
-        argv[i - 1] = NULL; // Remove "&" from command
-    }
-
-    // Fork and execute the command
-    pid_t pid = fork();
-
-    if (pid == 0) // Child process
-    {
-        setpgid(0, 0); // Set a new process group for background processes
-        execvp(argv[0], argv);
-        perror("exec failed");
-        exit(EXIT_FAILURE);
-    }
-    else if (pid > 0) // Parent process
-    {
-        if (!background)
-        {
-            int status;
-            waitpid(pid, &status, 0); // Wait for foreground processes
+    // Change directory built-in.
+    if (strcmp(argv[0], "cd") == 0) {
+        // Pass argv[1] (may be NULL) to change_dir.
+        if (change_dir(&argv[1]) != 0) {
+            fprintf(stderr, "cd: failed to change directory\n");
         }
-        else
-        {
-            printf("[Background process started] PID: %d\n", pid);
-        }
-    }
-    else
-    {
-        perror("fork failed");
+        return true;
     }
 
-    return true;
+    // Add more built-ins (e.g., jobs, help) as needed.
+
+    return false;
 }
 
-// Initialize the shell environment
-void sh_init(struct shell *sh)
-{
+//-----------------------------------------------------------------------------
+// sh_init
+//-----------------------------------------------------------------------------
+void sh_init(struct shell *sh) {
     sh->shell_terminal = STDIN_FILENO;
     sh->shell_is_interactive = isatty(sh->shell_terminal);
 
-    if (sh->shell_is_interactive)
-    {
+    if (sh->shell_is_interactive) {
+        // Wait until we are in the foreground.
         while (tcgetpgrp(sh->shell_terminal) != (sh->shell_pgid = getpgrp()))
             kill(-sh->shell_pgid, SIGTTIN);
 
+        // Put the shell in its own process group.
         sh->shell_pgid = getpid();
-        setpgid(sh->shell_pgid, sh->shell_pgid);
+        if (setpgid(sh->shell_pgid, sh->shell_pgid) < 0) {
+            perror("sh_init: Couldn't put the shell in its own process group");
+            exit(EXIT_FAILURE);
+        }
+        // Grab control of the terminal.
         tcsetpgrp(sh->shell_terminal, sh->shell_pgid);
-
-        signal(SIGINT, SIG_IGN);
-        signal(SIGQUIT, SIG_IGN);
-        signal(SIGTSTP, SIG_IGN);
-        signal(SIGTTIN, SIG_IGN);
-        signal(SIGTTOU, SIG_IGN);
-        signal(SIGCHLD, handle_sigchld); // Handle background processes
+        tcgetattr(sh->shell_terminal, &sh->shell_tmodes);
     }
-
     sh->prompt = get_prompt("SHELL_PROMPT");
 }
 
-
-// Destroy shell and free memory
+//-----------------------------------------------------------------------------
+// sh_destroy
+//-----------------------------------------------------------------------------
 void sh_destroy(struct shell *sh) {
     if (sh->prompt) {
         free(sh->prompt);
     }
+    // Any other cleanup can go here.
 }
 
-// Parse command-line arguments (if needed)
-void parse_args(int argc, char **argv)
-{
-    for (int i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "-v") == 0)
-        {
-            printf("Shell version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
-            exit(0);
-        }
-    }
+//-----------------------------------------------------------------------------
+// parse_args
+//-----------------------------------------------------------------------------
+// A stub for command line argument processing. Expand as needed.
+void parse_args(int argc, char **argv) {
+    UNUSED(argc);
+    UNUSED(argv);
 }

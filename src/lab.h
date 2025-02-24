@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define lab_VERSION_MAJOR 1
 #define lab_VERSION_MINOR 0

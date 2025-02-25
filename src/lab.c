@@ -6,6 +6,8 @@
 #include <signal.h>
 #include <errno.h>
 #include <ctype.h>
+#include <readline/readline.h>
+#include <readline/history.h>
 
 //-----------------------------------------------------------------------------
 // get_prompt
@@ -83,13 +85,13 @@ char **cmd_parse(const char *line) {
 //-----------------------------------------------------------------------------
 // cmd_free
 //-----------------------------------------------------------------------------
-void cmd_free(char **line) {
-    if (!line)
-        return;
-    for (int i = 0; line[i] != NULL; i++) {
-        free(line[i]);
+void cmd_free(char **args) {
+    if (args) {
+        for (int i = 0; args[i] != NULL; i++) {
+            free(args[i]);  // Free each argument
+        }
+        free(args);  // Free the array itself
     }
-    free(line);
 }
 
 //-----------------------------------------------------------------------------
@@ -118,30 +120,52 @@ char *trim_white(char *line) {
 //-----------------------------------------------------------------------------
 // do_builtin
 //-----------------------------------------------------------------------------
-// Checks if the command is a built-in and executes it if so.
 bool do_builtin(struct shell *sh, char **argv) {
     if (!argv || !argv[0])
         return false;
 
-    // Exit built-in: terminates the shell.
+    // Exit built-in: terminates the shell. PART 5
     if (strcmp(argv[0], "exit") == 0) {
-        sh_destroy(sh);
-        exit(EXIT_SUCCESS);
+        int exit_status = 0;  // Default to normal exit.
+
+        if (argv[1] != NULL) {
+            // Convert argument to an integer exit status.
+            exit_status = atoi(argv[1]);  
+        }
+
+        if (strcmp(argv[0], "exit") == 0) {
+            int exit_status = (argv[1] != NULL) ? atoi(argv[1]) : 0;
+        
+            cmd_free(argv);  // Free arguments before exiting
+            sh_destroy(sh);  // Cleanup shell
+            exit(exit_status);
+        }
+        else if (strcmp(argv[0], "history") == 0) {
+            HIST_ENTRY **hist_list = history_list();
+            if (hist_list) {
+                for (int i = 0; hist_list[i]; i++) {
+                    printf("%d  %s\n", i + history_base, hist_list[i]->line);
+                }
+            }
+            return 1;  // Indicate built-in command was handled
+        }
+        
+
+        sh_destroy(sh);  // Cleanup before exiting.
+        exit(exit_status);
     }
 
     // Change directory built-in.
     if (strcmp(argv[0], "cd") == 0) {
-        // Pass argv[1] (may be NULL) to change_dir.
         if (change_dir(&argv[1]) != 0) {
             fprintf(stderr, "cd: failed to change directory\n");
         }
         return true;
     }
 
-    // Add more built-ins (e.g., jobs, help) as needed.
-
     return false;
 }
+
 
 //-----------------------------------------------------------------------------
 // sh_init
@@ -151,22 +175,22 @@ void sh_init(struct shell *sh) {
     sh->shell_is_interactive = isatty(sh->shell_terminal);
 
     if (sh->shell_is_interactive) {
-        // Wait until we are in the foreground.
         while (tcgetpgrp(sh->shell_terminal) != (sh->shell_pgid = getpgrp()))
             kill(-sh->shell_pgid, SIGTTIN);
 
-        // Put the shell in its own process group.
         sh->shell_pgid = getpid();
         if (setpgid(sh->shell_pgid, sh->shell_pgid) < 0) {
             perror("sh_init: Couldn't put the shell in its own process group");
             exit(EXIT_FAILURE);
         }
-        // Grab control of the terminal.
         tcsetpgrp(sh->shell_terminal, sh->shell_pgid);
         tcgetattr(sh->shell_terminal, &sh->shell_tmodes);
     }
-    sh->prompt = get_prompt("SHELL_PROMPT");
+
+    // Get the prompt from the environment variable
+    sh->prompt = get_prompt("TonyShellPrompt");
 }
+
 
 //-----------------------------------------------------------------------------
 // sh_destroy
@@ -186,3 +210,5 @@ void parse_args(int argc, char **argv) {
     UNUSED(argc);
     UNUSED(argv);
 }
+
+

@@ -1,6 +1,7 @@
 {
     "files.associations": {
         ".fantomasignore": "ignore",
-        "fcntl.h": "c"
+        "fcntl.h": "c",
+        "string.h": "c"
     }
 }

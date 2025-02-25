@@ -34,7 +34,7 @@ static void explain_waitpid(int status)
     }
 }
 
-// Function to print version
+// Function to print version PART2
 void print_version() {
     printf("Shell version: %d.%d\n", lab_VERSION_MAJOR, lab_VERSION_MINOR);
 }

@@ -51,34 +51,45 @@ int change_dir(char **dir) {
 // This function tokenizes the input line into an array of strings suitable for execvp.
 // It allocates memory for the array and each token, so cmd_free must later be called.
 char **cmd_parse(const char *line) {
-    if (line == NULL)
-        return NULL;
-    
-    // First, count the number of tokens.
+    if (!line) return NULL;
+
     int count = 0;
     char *copy = strdup(line);
+    if (!copy) return NULL;
+
     char *token = strtok(copy, " \t");
-    while (token != NULL) {
+    while (token) {
         count++;
         token = strtok(NULL, " \t");
     }
     free(copy);
 
-    // Allocate array of pointers (+1 for NULL termination).
+    // Allocate memory for arguments (+1 for NULL terminator)
     char **args = malloc((count + 1) * sizeof(char *));
-    if (!args)
-        return NULL;
+    if (!args) return NULL;
 
-    // Tokenize again and store each token.
+    // Tokenize again and store tokens
     copy = strdup(line);
+    if (!copy) {
+        free(args);
+        return NULL;
+    }
+
     token = strtok(copy, " \t");
     int i = 0;
-    while (token != NULL) {
-        args[i++] = strdup(token);
+    while (token) {
+        args[i] = strdup(token);
+        if (!args[i]) {  // Memory allocation failure handling
+            cmd_free(args);
+            free(copy);
+            return NULL;
+        }
+        i++;
         token = strtok(NULL, " \t");
     }
-    args[i] = NULL; // Null-terminate the array.
+    args[i] = NULL; // Null-terminate the array
     free(copy);
+
     return args;
 }
 
@@ -86,12 +97,11 @@ char **cmd_parse(const char *line) {
 // cmd_free
 //-----------------------------------------------------------------------------
 void cmd_free(char **args) {
-    if (args) {
-        for (int i = 0; args[i] != NULL; i++) {
-            free(args[i]);  // Free each argument
-        }
-        free(args);  // Free the array itself
+    if (!args) return;
+    for (int i = 0; args[i] != NULL; i++) {
+        free(args[i]);
     }
+    free(args);
 }
 
 //-----------------------------------------------------------------------------
@@ -175,14 +185,26 @@ void sh_init(struct shell *sh) {
     sh->shell_is_interactive = isatty(sh->shell_terminal);
 
     if (sh->shell_is_interactive) {
-        while (tcgetpgrp(sh->shell_terminal) != (sh->shell_pgid = getpgrp()))
+        // Block until we are in the foreground
+        while (tcgetpgrp(sh->shell_terminal) != (sh->shell_pgid = getpgrp())) {
             kill(-sh->shell_pgid, SIGTTIN);
+        }
 
+        // Ignore interactive and job-control signals
+        signal(SIGINT, SIG_IGN);
+        signal(SIGQUIT, SIG_IGN);
+        signal(SIGTSTP, SIG_IGN);
+        signal(SIGTTIN, SIG_IGN);
+        signal(SIGTTOU, SIG_IGN);
+
+        // Put ourselves in our own process group
         sh->shell_pgid = getpid();
         if (setpgid(sh->shell_pgid, sh->shell_pgid) < 0) {
             perror("sh_init: Couldn't put the shell in its own process group");
             exit(EXIT_FAILURE);
         }
+
+        // Grab control of the terminal and save its attributes
         tcsetpgrp(sh->shell_terminal, sh->shell_pgid);
         tcgetattr(sh->shell_terminal, &sh->shell_tmodes);
     }
